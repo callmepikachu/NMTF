@@ -1,0 +1,30 @@
+# Settings of the analysis. Change them here, not in the code.
+
+# --- gene network and annotations (scripts/prepare_data.py) -------------------------
+data:
+  # Keep STRING physical links with a combined score of at least this (0-1000).
+  # 700 is STRING's "high confidence" cut-off.
+  string_min_score: 700
+  # GO annotations: biological process only, without electronic (IEA) annotations.
+  go_aspect: P
+  go_exclude_evidence: [IEA]
+  # Keep the n best-connected annotated genes. The data stay small, so the whole
+  # analysis runs in a few minutes on a laptop or on a GitHub runner.
+  n_genes: 2000
+
+# --- the two inputs that are compared ----------------------------------------------
+network:
+  ppmi_window: 10   # random-walk length of the PPMI (Pržulj group uses 10)
+  ppmi_neg: 1
+
+# --- orthogonal NMTF (scripts/run_embeddings.py) -----------------------------------
+nmtf:
+  k: 32             # number of clusters / axes
+  n_iter: 300       # multiplicative-update rounds
+  seeds: [0, 1, 2, 3, 4]   # random starts; the spread between seeds is the noise level
+
+# --- GO enrichment of the clusters ---------------------------------------------------
+enrichment:
+  min_term_size: 5
+  max_term_size: 200
+  fdr: 0.05
