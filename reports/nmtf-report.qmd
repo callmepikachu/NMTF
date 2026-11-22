@@ -1,0 +1,236 @@
+---
+title: "Does a random-walk transform help NMTF embed a protein interaction network?"
+subtitle: "PPMI versus adjacency input for orthogonal NMTF on a human physical-interaction network"
+author: "keqin peng"
+date: today
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+    code-tools: true
+execute:
+  warning: false
+bibliography: references.bib
+jupyter: python3
+---
+
+## Question
+
+Orthogonal non-negative matrix tri-factorisation (NMTF) embeds the genes of a network
+into a low-dimensional space in which every gene gets a cluster [@ding2006].
+The Pržulj group does not factorise the network's adjacency matrix directly. It factorises
+the random-walk PPMI of the network, a matrix of how often two genes co-occur on short random
+walks [@qiu2018; @xenos2021; @doria2023]. Does this transform give clusters that
+are functionally more coherent than the plain adjacency matrix, and clusters that are
+more stable when only the random start changes?
+
+This report answers the question on a small network, so the whole analysis rebuilds from the
+raw files in a few minutes (`pixi run reproduce`). It reads only files made by the code in
+`scripts/`; every number, table and figure below is computed when the report is rendered.
+
+```{python}
+#| label: setup
+import json
+import platform
+import subprocess
+from importlib.metadata import version
+
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import yaml
+
+cfg = yaml.safe_load(open("config/config.yaml"))
+summary = json.load(open("data/processed/summary.json"))
+sources = pd.read_csv("metadata/sources.tsv", sep="\t")
+metrics = pd.read_csv("results/metrics.csv")
+convergence = pd.read_csv("results/convergence.csv")
+stability = pd.read_csv("results/stability.csv")
+top_terms = pd.read_csv("results/top_terms.csv")
+
+COLORS = {"PPMI": "#2a78d6", "Adjacency": "#eb6834"}
+ORDER = ["PPMI", "Adjacency"]
+seeds = cfg["nmtf"]["seeds"]
+n_seeds = len(seeds)
+by_input = metrics.groupby("input")
+mean = by_input.mean(numeric_only=True)
+sd = by_input.std(numeric_only=True)
+ari = stability.groupby("input")["ari"].agg(["mean", "std"])
+
+
+def fmt(x, digits=1):
+    return f"{x:,.{digits}f}"
+```
+
+## Data
+
+```{python}
+#| label: tbl-sources
+#| tbl-cap: "Raw data. Files are downloaded by `scripts/download_data.py` and checked against the SHA-256 in `metadata/sources.tsv`."
+sources.assign(sha256=sources["sha256"].str[:12] + "…").set_index("name")[["url", "sha256", "license"]]
+```
+
+The network is the STRING v12 network of *physical* protein-protein interactions for human
+[@szklarczyk2023], keeping links with a combined score of at least
+`{python} cfg["data"]["string_min_score"]` (STRING's high-confidence cut-off). Gene functions
+are the biological-process annotations of the Gene Ontology [@go2023] taken from the UniProt-GOA
+file of human proteins, without electronic (IEA) annotations and without
+`NOT` annotations. The GO hierarchy is not used, so a gene is annotated only with the terms
+curators gave it directly.
+
+Of the `{python} fmt(summary["string_links_in_file"], 0)` rows of the STRING file (each
+link is listed in both directions),
+`{python} fmt(summary["string_links_above_threshold"], 0)` pass the score cut-off. These
+connect `{python} fmt(summary["annotated_genes_in_network_before_selection"], 0)` genes that also
+have a GO annotation, with `{python} fmt(summary["edges_before_selection"], 0)` distinct links.
+To keep the analysis small we use the `{python} fmt(cfg["data"]["n_genes"], 0)`
+best-connected of these genes. The network that is analysed has
+`{python} fmt(summary["n_genes"], 0)` genes and `{python} fmt(summary["n_edges"], 0)` links
+(median degree `{python} fmt(summary["median_degree"], 0)`). These genes carry
+`{python} fmt(summary["n_terms"], 0)` different GO terms, `{python} fmt(summary["median_terms_per_gene"], 0)`
+per gene (median).
+
+## Method
+
+For each input matrix $X$ (the PPMI with random-walk length
+`{python} cfg["network"]["ppmi_window"]`, or the 0/1 adjacency matrix) and for each of the
+`{python} n_seeds` random seeds we compute the orthogonal NMTF $X \approx P S G^\top$ with
+$P, S, G \ge 0$ and $G^\top G = I$ by multiplicative updates
+(`{python} cfg["nmtf"]["n_iter"]` rounds, $k =$ `{python} cfg["nmtf"]["k"]` clusters).
+Every gene is assigned to the column where its row of $P$ is largest. Each cluster is
+tested against every GO term that annotates between `{python} cfg["enrichment"]["min_term_size"]`
+and `{python} cfg["enrichment"]["max_term_size"]` genes (hypergeometric test, Benjamini-Hochberg
+correction, q ≤ `{python} cfg["enrichment"]["fdr"]`). We report three summaries [@doria2023]:
+the share of clusters enriched in at least one term, the share of genes that sit in such
+clusters, and the share of tested terms enriched in at least one cluster. As a measure of
+stability we compute the adjusted Rand index (ARI) between the clusterings of every pair of
+seeds. All settings are in `config/config.yaml`.
+
+## Results
+
+```{python}
+#| label: tbl-results
+#| tbl-cap: "Mean ± standard deviation over the random seeds."
+rows = {
+    "GO terms enriched in ≥ 1 cluster (%)": "pct_terms_enriched",
+    "Clusters enriched in ≥ 1 term (%)": "pct_clusters_enriched",
+    "Genes in enriched clusters (%)": "pct_genes_in_enriched_clusters",
+    "Significant cluster-term pairs": "n_significant_pairs",
+    "Relative reconstruction error": "rel_error",
+}
+table = {}
+for label, col in rows.items():
+    digits = 3 if col == "rel_error" else (0 if col == "n_significant_pairs" else 1)
+    table[label] = [f"{fmt(mean.loc[i, col], digits)} ± {fmt(sd.loc[i, col], digits)}" for i in ORDER]
+table["Agreement between seeds (ARI)"] = [f"{ari.loc[i, 'mean']:.2f} ± {ari.loc[i, 'std']:.2f}" for i in ORDER]
+pd.DataFrame(table, index=ORDER).T
+```
+
+```{python}
+#| label: fig-main
+#| fig-cap: "Functional enrichment and seed stability of the clusters. (a) Share of tested GO terms that are enriched in at least one cluster, one dot per seed. (b) Adjusted Rand index between the clusterings of two seeds, one dot per pair of seeds. Bars are means."
+#| fig-alt: "Two dot plots side by side with two columns each, PPMI in blue and Adjacency in orange. Panel a shows the percentage of GO terms enriched in at least one cluster, panel b the agreement between seeds as adjusted Rand index. In both panels the PPMI dots lie clearly above the Adjacency dots and are less spread out."
+fig, axes = plt.subplots(1, 2, figsize=(7.5, 3.6))
+rng = np.random.default_rng(0)
+panels = [("pct_terms_enriched", metrics, "GO terms enriched (%)", "a"),
+          ("ari", stability, "Agreement between seeds (ARI)", "b")]
+for ax, (col, df, label, letter) in zip(axes, panels):
+    for x, name in enumerate(ORDER):
+        values = df.loc[df["input"] == name, col].to_numpy()
+        ax.bar(x, values.mean(), width=0.55, color=COLORS[name], alpha=0.25)
+        ax.scatter(x + rng.uniform(-0.12, 0.12, len(values)), values, s=22, color=COLORS[name])
+    ax.set_xticks(range(len(ORDER)), ORDER)
+    ax.set_ylabel(label)
+    ax.set_ylim(0, None)
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_title(letter, loc="left", fontweight="bold")
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: numbers
+p_terms, a_terms = mean.loc["PPMI", "pct_terms_enriched"], mean.loc["Adjacency", "pct_terms_enriched"]
+p_ari, a_ari = ari.loc["PPMI", "mean"], ari.loc["Adjacency", "mean"]
+p_clu, a_clu = mean.loc["PPMI", "pct_clusters_enriched"], mean.loc["Adjacency", "pct_clusters_enriched"]
+p_err, a_err = mean.loc["PPMI", "rel_error"], mean.loc["Adjacency", "rel_error"]
+# the two inputs do not overlap if the worst seed of the better one beats the best seed of the other
+worst_ppmi = by_input["pct_terms_enriched"].min()["PPMI"]
+best_adj = by_input["pct_terms_enriched"].max()["Adjacency"]
+no_overlap = "does not overlap" if worst_ppmi > best_adj else "overlaps"
+higher = "more" if p_terms > a_terms else "fewer"
+more_stable = "more stable" if p_ari > a_ari else "less stable"
+```
+
+@tbl-results and @fig-main show that clusters made from the PPMI recover
+`{python} higher` GO terms than clusters made from the adjacency matrix:
+`{python} fmt(p_terms)` % against `{python} fmt(a_terms)` % of the tested terms. The range of the
+`{python} n_seeds` PPMI seeds `{python} no_overlap` with the range of the adjacency seeds. PPMI clusterings are also
+`{python} more_stable` when only the random start changes (mean ARI `{python} f"{p_ari:.2f}"`
+against `{python} f"{a_ari:.2f}"`).
+The share of clusters and of genes with *any* enrichment is high for both inputs
+(`{python} fmt(p_clu)` % and `{python} fmt(a_clu)` % of the clusters): with
+`{python} fmt(summary["n_terms"], 0)` annotated terms and clusters of about
+`{python} fmt(summary["n_genes"] / cfg["nmtf"]["k"], 0)` genes almost every cluster shares some term
+with the annotations, so these two summaries cannot tell the inputs apart on this network.
+The PPMI factorisation also fits its input better
+(relative error `{python} f"{p_err:.2f}"` against `{python} f"{a_err:.2f}"`, @fig-convergence).
+The two errors are not directly comparable, because the matrices differ.
+
+```{python}
+#| label: fig-convergence
+#| fig-cap: "Relative reconstruction error ‖X − PSGᵀ‖/‖X‖ of the multiplicative updates, one line per seed."
+#| fig-alt: "Line plot of relative reconstruction error against iteration, from iteration 0 to the last one, with five blue lines for the PPMI input and five orange lines for the adjacency input. The lines of each input lie close together. All lines fall quickly during the first iterations and then flatten."
+fig, ax = plt.subplots(figsize=(6.5, 3.6))
+for (name, seed), df in convergence.groupby(["input", "seed"]):
+    ax.plot(df["iter"], df["rel_error"], color=COLORS[name], alpha=0.8, linewidth=1.2,
+            label=name if seed == seeds[0] else None)
+ax.set_xlabel("Iteration")
+ax.set_ylabel("Relative reconstruction error")
+ax.grid(alpha=0.3)
+ax.legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+```{python}
+#| label: tbl-top
+#| tbl-cap: "Best GO term of each PPMI cluster (seed 0), for the five clusters with the smallest q-values. Term names are not part of the GOA file, so terms are shown by their GO identifier."
+best = top_terms[top_terms["input"] == "PPMI"].sort_values("q").head(5)
+best[["cluster", "term", "overlap", "cluster_size", "term_size", "q"]].assign(
+    q=lambda d: d["q"].map(lambda v: f"{v:.1e}")).set_index("cluster")
+```
+
+## Limits
+
+- The analysis uses one network (the `{python} fmt(summary["n_genes"], 0)` best-connected genes), one
+  number of clusters ($k =$ `{python} cfg["nmtf"]["k"]`), and one score cut-off. The result may differ for
+  the whole genome, where the Pržulj group works, or for other settings.
+- GO terms are used as curated, without propagation along the ontology, so the tested terms are
+  specific and many of them are small.
+- After `{python} cfg["nmtf"]["n_iter"]` rounds the error is still falling slowly (@fig-convergence), so
+  the factorisations are not fully converged; more rounds could change the numbers a little.
+- A gene's cluster comes from the largest entry of its row of $P$ (a hard assignment of a soft
+  embedding), and ARI measures only agreement between runs, not correctness.
+- Enrichment shows that clusters are functionally coherent; it does not show that PPMI recovers
+  *biologically better* modules than the adjacency matrix, only that more annotated functions
+  concentrate in single clusters.
+
+## Software and data versions
+
+```{python}
+#| label: tbl-versions
+#| tbl-cap: "Software that produced this report (locked in `pixi.lock`)."
+quarto_version = subprocess.run(["quarto", "--version"], capture_output=True, text=True).stdout.strip()
+pd.DataFrame({"software": ["Python", "NumPy", "SciPy", "pandas", "Matplotlib", "PyYAML", "Quarto", "Platform"],
+              "version": [platform.python_version(), version("numpy"), version("scipy"), version("pandas"),
+                          matplotlib.__version__, version("pyyaml"), quarto_version,
+                          f"{platform.system()} {platform.machine()}"]}).set_index("software")
+```
+
+Data: STRING v12.0 (physical links, protein info) and the UniProt-GOA human file of the Gene
+Ontology release 2026-05-19, as recorded in `metadata/sources.tsv`.
+
+## References
