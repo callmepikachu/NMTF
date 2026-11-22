@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+title: "NMTF: PPMI versus adjacency input for orthogonal NMTF of a protein interaction network"
+abstract: "A small, fully reproducible analysis that factorises a human physical protein-protein interaction network (STRING v12) with orthogonal NMTF, from its random-walk PPMI and from its adjacency matrix, and compares the clusters by GO enrichment and stability across random seeds."
+type: software
+authors:
+  - given-names: "keqin"
+    family-names: "peng"
+    email: "pkqpikachu@gmail.com"
+    orcid: "https://orcid.org/0009-0000-1487-1227"
+repository-code: "https://github.com/callmepikachu/NMTF"
+license: MIT
+version: 0.1.0
+date-released: "2026-11-22"
+keywords:
+  - reproducibility
+  - network embedding
+  - NMTF
+  - protein-protein interaction
+  - Gene Ontology
+references:
+  - type: article
+    title: "Linear functional organization of the omic embedding space"
+    authors:
+      - family-names: "Xenos"
+        given-names: "Alexandros"
+      - family-names: "Malod-Dognin"
+        given-names: "Noel"
+      - family-names: "Milinković"
+        given-names: "Siniša"
+      - family-names: "Pržulj"
+        given-names: "Nataša"
+    journal: "Bioinformatics"
+    volume: 37
+    issue: 21
+    start: 3839
+    end: 3847
+    year: 2021
+    doi: "10.1093/bioinformatics/btab487"
